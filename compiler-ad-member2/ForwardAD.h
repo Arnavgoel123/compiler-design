@@ -1,7 +1,7 @@
 #ifndef COMPILER_AD_MEMBER2_FORWARD_AD_H
 #define COMPILER_AD_MEMBER2_FORWARD_AD_H
 
-#include "../compiler-ad-member4/IR.h"
+#include "compiler-ad-member4/src/ir/IR.h"
 #include <string>
 #include <unordered_map>
 
