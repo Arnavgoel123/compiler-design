@@ -23,66 +23,7 @@
 #include <vector>
 #include <memory>
 #include "IR.h"
-
-namespace ast {
-
-using namespace std;
-
-// Binary/unary operator kinds at the AST level. These map onto ir::Op
-// during conversion (see ASTToIR.cpp).
-enum class BinaryOp { ADD, SUB, MUL, DIV, POW };
-enum class UnaryOp  { NEG, SIN, COS, EXP, LOG };
-
-// Base class for all AST expression nodes.
-struct Node {
-    virtual ~Node() = default;
-};
-
-struct Number : Node {
-    double value;
-    explicit Number(double v) : value(v) {}
-};
-
-struct Variable : Node {
-    string name;
-    explicit Variable(string n) : name(std::move(n)) {}
-};
-
-struct BinaryExpression : Node {
-    BinaryOp op;
-    unique_ptr<Node> left;
-    unique_ptr<Node> right;
-    BinaryExpression(BinaryOp o, unique_ptr<Node> l, unique_ptr<Node> r)
-        : op(o), left(std::move(l)), right(std::move(r)) {}
-};
-
-struct UnaryExpression : Node {
-    UnaryOp op;
-    unique_ptr<Node> operand;
-    UnaryExpression(UnaryOp o, unique_ptr<Node> operand_)
-        : op(o), operand(std::move(operand_)) {}
-};
-
-// Generic function-call form, e.g. sin(x), cos(x), exp(x), log(x), pow(x, y).
-// Provided as an alternative to UnaryExpression/BinaryOp::POW in case
-// Member 1's parser represents built-in functions as calls instead of
-// dedicated unary nodes.
-struct FunctionCall : Node {
-    string callee; // "sin", "cos", "exp", "log", "pow"
-    vector<unique_ptr<Node>> args;
-    FunctionCall(string name, vector<unique_ptr<Node>> a)
-        : callee(std::move(name)), args(std::move(a)) {}
-};
-
-// Top level "y = <expr>" statement.
-struct Assignment : Node {
-    string targetName;   // e.g. "y" (the output name)
-    unique_ptr<Node> value;
-    Assignment(string target, unique_ptr<Node> v)
-        : targetName(std::move(target)), value(std::move(v)) {}
-};
-
-} // namespace ast
+#include "AST.h" // Shared AST definitions from Member 1
 
 namespace astToIr {
 
@@ -93,6 +34,11 @@ using namespace std;
 struct ConversionError : public runtime_error {
     explicit ConversionError(const string& msg) : runtime_error(msg) {}
 };
+
+// Converts a complete Member 1 Program AST (including input declarations and assignment)
+// into a structured IRFunction.
+ir::IRFunction convertProgram(const ast::Program& program,
+                              const string& functionName = "f");
 
 // Converts a top level Assignment AST into a structured IRFunction.
 // `functionName` becomes the generated IR function's name.

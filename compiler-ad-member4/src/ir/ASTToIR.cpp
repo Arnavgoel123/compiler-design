@@ -123,4 +123,22 @@ ir::IRFunction convert(const ast::Assignment& assignment,
     return convertExpression(*assignment.value, functionName, knownParams);
 }
 
+ir::IRFunction convertProgram(const ast::Program& program,
+                              const string& functionName) {
+    if (!program.assignment) {
+        throw ConversionError("Program has no assignment statement");
+    }
+
+    vector<string> params;
+    for (const auto& inputDecl : program.inputs) {
+        if (inputDecl) {
+            for (const auto& name : inputDecl->names) {
+                params.push_back(name);
+            }
+        }
+    }
+
+    return convert(*program.assignment, functionName, params);
+}
+
 } // namespace astToIr

@@ -24,6 +24,7 @@ add_library(compiler_ad_core STATIC
 
 target_include_directories(compiler_ad_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../compiler-ad-member1/include
 )
 
 # ---------------------------------------------------------------------------
