@@ -35,10 +35,22 @@ struct ConversionError : public runtime_error {
     explicit ConversionError(const string& msg) : runtime_error(msg) {}
 };
 
-// Converts a complete Member 1 Program AST (including input declarations and assignment)
-// into a structured IRFunction.
+// Converts a complete Member 1 Program AST (including input declarations and
+// assignment) into a structured IRFunction. For a multi-equation program this
+// is the function for the LAST assignment (the final output); use
+// convertProgramAll() to get every equation.
 ir::IRFunction convertProgram(const ast::Program& program,
                               const string& functionName = "f");
+
+// Converts EVERY assignment of a (possibly multi-equation) program.
+//   * Variables defined by earlier equations are substituted by the SSA value
+//     that computed them, so shared sub-computations are emitted only once.
+//   * Each output becomes its own IRFunction named "<functionPrefix>_<var>",
+//     containing only the instructions that output depends on (dead code from
+//     unrelated equations is pruned) and renumbered t1, t2, ...
+//   * All outputs share the program's declared input list as parameters.
+ir::IRProgram convertProgramAll(const ast::Program& program,
+                                const string& functionPrefix = "f");
 
 // Converts a top level Assignment AST into a structured IRFunction.
 // `functionName` becomes the generated IR function's name.

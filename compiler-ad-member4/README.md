@@ -132,6 +132,26 @@ or rewriting the converter to walk his tree directly). `IR.h/.cpp`, the
 optimizer, the code generator, and the validator all operate purely on
 `ir::IRFunction` and require **no changes**.
 
+## Multiple equations (`IRProgram`, `convertProgramAll`)
+
+A program may contain several equations (`a = x*z; y = sin(a) + x; ...`).
+`astToIr::convertProgramAll()` lowers it to an `ir::IRProgram`:
+
+- one shared SSA stream is built, so a sub-expression used by several
+  equations is emitted once; a variable defined by an earlier equation is
+  replaced by the SSA value that computed it;
+- every assigned variable becomes an `IROutput { name, IRFunction }`; each
+  function is **pruned** to the instructions that output depends on and
+  renumbered `t1, t2, ...`;
+- all outputs share the declared input list as their parameters.
+
+Because every output is an ordinary single-output `IRFunction`, Forward AD,
+Reverse AD, the optimizer, code generator and validators are unchanged. The
+Jacobian is `outputs x inputs` independent derivative functions;
+`CodeGenerator::generateJacobianWrapper()` emits a C++ function filling
+`J[i][j] = d(output_i)/d(input_j)`. `convertProgram()` keeps its old signature
+and returns the function for the last equation.
+
 ## IR validation (`src/validation/Validator.h/.cpp` → `IRValidator`)
 
 `IRValidator::validate(const IRFunction&)` checks for:

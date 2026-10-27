@@ -85,7 +85,15 @@ struct Assignment : Node {
 
 struct Program : Node {
     std::vector<std::unique_ptr<InputDeclaration>> inputs;
-    std::unique_ptr<Assignment> assignment;
+
+    // Every equation of the program, in source order. Each assignment defines
+    // one named value; later equations may use the values defined by earlier
+    // ones (single-assignment: a name is defined at most once).
+    std::vector<std::unique_ptr<Assignment>> assignments;
+
+    // Non-owning pointer to the LAST assignment (the "final" output). Kept so
+    // single-equation code (`program->assignment->targetName`) keeps working.
+    Assignment* assignment = nullptr;
 
     explicit Program(SourceLocation loc = {}) : Node(loc) {}
 };

@@ -140,6 +140,29 @@ string IRFunction::toString() const {
     return oss.str();
 }
 
+// --------------------------------------------------------------- IRProgram --
+
+const IROutput* IRProgram::find(const string& outputName) const {
+    for (const auto& output : outputs) {
+        if (output.name == outputName) return &output;
+    }
+    return nullptr;
+}
+
+string IRProgram::toString() const {
+    ostringstream oss;
+    oss << "##### IR PROGRAM: " << outputs.size() << " output(s) over inputs (";
+    for (size_t i = 0; i < params.size(); ++i) {
+        oss << params[i];
+        if (i + 1 < params.size()) oss << ", ";
+    }
+    oss << ") #####\n";
+    for (const auto& output : outputs) {
+        oss << "-- output '" << output.name << "'\n" << output.function.toString() << "\n";
+    }
+    return oss.str();
+}
+
 // --------------------------------------------------------------- IRBuilder --
 
 IRBuilder::IRBuilder(string functionName) {

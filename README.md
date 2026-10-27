@@ -38,3 +38,58 @@ The compiler processes input mathematical expressions through a strict 4-stage p
 | All Members — Integration, Optimization, Testing & Benchmarking                   |
 | AST/IR Optimization Passes -> Target Code Emission -> Automated Validation Suite |
 +-----------------------------------------------------------------------------------+
+
+---
+
+## Multiple equations and the Jacobian
+
+The compiler is no longer limited to a single equation. A program is a list of
+`input` declarations followed by one or more equations; later equations can use
+earlier results, and **every assigned variable is differentiated with respect to
+every input** (the full Jacobian), in both forward and reverse mode.
+
+```text
+input x, z;
+a = x * z;
+y = sin(a) + x^2;
+w = exp(y) / (1 + z^2);
+```
+
+What the pipeline does with it:
+
+1. **Frontend** - parses all equations and builds a **symbol table** (inputs, then
+   assigned variables) while checking declare-before-use, single assignment and
+   no self-reference.
+2. **IR** - each equation becomes its own pruned `IRFunction` (shared sub-expressions
+   are computed once, then dead code from unrelated equations is removed).
+3. **AD** - Forward and Reverse AD run for every (output, input) pair.
+4. **Codegen** - generates the primal functions, all derivative functions and
+   `jacobian_forward(...)` / `jacobian_reverse(...)` wrappers.
+5. **Validation** - every derivative is checked against finite differences, with the
+   other inputs held fixed; sample points outside a function's domain (e.g. `log` of a
+   negative) are skipped rather than reported as failures.
+
+### Usage
+
+```bash
+cmake -S . -B build
+cmake --build build
+
+# program on the command line (optional 2nd argument: 'all' or e.g. x,z)
+build/compiler_ad "input x, z; a = x*z; y = sin(a) + x^2;"
+
+# program from a file, and write the generated C++ to disk
+build/compiler_ad --file examples/neuron.dsl --emit neuron_ad.cpp
+
+# interactive: type several lines, finish with an empty line
+build/compiler_ad
+
+# run every test (module tests + end-to-end examples + invalid-program checks)
+ctest --test-dir build --output-on-failure
+```
+
+Use a non-Release build type (the default above, or `-DCMAKE_BUILD_TYPE=Debug`) when
+running the older module tests: they use `assert`, which Release builds compile out.
+
+`examples/` contains `chain.dsl`, `rosenbrock.dsl`, `neuron.dsl` (a sigmoid neuron with
+squared-error loss) and `single.dsl` (the original one-equation case).
