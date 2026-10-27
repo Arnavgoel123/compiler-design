@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <cassert>
+#include <cmath>
 
 using namespace std;
 using namespace ir;
@@ -117,6 +118,82 @@ void test_division_log() {
     runReverseADTest("y = log(x) / (x + 1)", assig, "x", {0.5, 1.0, 2.0, 5.0});
 }
 
+void test_multivariable_gradient() {
+    // y = x^2 * y + sin(y)
+    // dy/dx = 2 * x * y
+    // dy/dy = x^2 + cos(y)
+    cout << "\n=========================================\n";
+    cout << "Testing: y = x^2 * y + sin(y) (Multi-variable Gradient)\n";
+    cout << "=========================================\n";
+
+    auto x2 = bin(BinaryOp::MUL, var("x"), var("x"));
+    auto x2_y = bin(BinaryOp::MUL, std::move(x2), var("y"));
+    auto sin_y = un(UnaryOp::SIN, var("y"));
+    auto expr = bin(BinaryOp::ADD, std::move(x2_y), std::move(sin_y));
+    Assignment assig("z", std::move(expr));
+
+    IRFunction originalIR = astToIr::convert(assig, "f");
+    auto grad = reverseGradient(originalIR);
+
+    ASSERT_TRUE(grad.find("x") != grad.end(), "Gradient contains df/dx");
+    ASSERT_TRUE(grad.find("y") != grad.end(), "Gradient contains df/dy");
+
+    IRFunction optDx = Optimizer::optimize(grad["x"]);
+    IRFunction optDy = Optimizer::optimize(grad["y"]);
+
+    // Numerical checks at (x=2.0, y=3.0)
+    map<string, double> pt = {{"x", 2.0}, {"y", 3.0}};
+    double val_dx = ir::evaluate(optDx, pt);
+    double val_dy = ir::evaluate(optDy, pt);
+
+    // Exact: df/dx = 2 * 2 * 3 = 12
+    // Exact: df/dy = 2^2 + cos(3) = 4 + cos(3) = ~3.0100075
+    double expected_dx = 12.0;
+    double expected_dy = 4.0 + cos(3.0);
+
+    ASSERT_TRUE(abs(val_dx - expected_dx) < 1e-4, "Exact df/dx evaluates to 12.0");
+    ASSERT_TRUE(abs(val_dy - expected_dy) < 1e-4, "Exact df/dy evaluates to 4.0 + cos(3.0)");
+}
+
+void test_shared_subexpression_fanout() {
+    // y = (x + 1) * (x + 1) + sin(x + 1)
+    // Tests that adjoint accumulation correctly sums contributions from multiple fan-outs
+    cout << "\n=========================================\n";
+    cout << "Testing: Shared subexpression fanout y = (x+1)^2 + sin(x+1)\n";
+    cout << "=========================================\n";
+
+    auto t1 = bin(BinaryOp::ADD, var("x"), num(1.0));
+    auto t2 = bin(BinaryOp::ADD, var("x"), num(1.0));
+    auto sq = bin(BinaryOp::MUL, std::move(t1), std::move(t2));
+    auto s = un(UnaryOp::SIN, bin(BinaryOp::ADD, var("x"), num(1.0)));
+    auto expr = bin(BinaryOp::ADD, std::move(sq), std::move(s));
+    Assignment assig("y", std::move(expr));
+
+    runReverseADTest("y = (x + 1)^2 + sin(x + 1)", assig, "x", {-2.0, -1.0, 0.0, 1.5});
+}
+
+void test_dead_subexpression_pruning() {
+    // Manually create an IR with a dead instruction that doesn't feed the return value
+    cout << "\n=========================================\n";
+    cout << "Testing: Dead instruction pruning in Reverse AD\n";
+    cout << "=========================================\n";
+
+    IRBuilder builder("f_dead");
+    builder.addParam("x");
+    Operand deadOp = builder.sin_(Operand::makeVariable("x")); // Never used
+    (void)deadOp;
+    Operand useful = builder.mul(Operand::makeVariable("x"), Operand::makeConstant(3.0)); // 3 * x
+    builder.setReturn(useful);
+
+    IRFunction orig = builder.build();
+    IRFunction deriv = reverseDifferentiate(orig, "x");
+    IRFunction opt = Optimizer::optimize(deriv);
+
+    // Evaluating df/dx at x=5 should be 3.0
+    double res = ir::evaluate(opt, {{"x", 5.0}});
+    ASSERT_TRUE(abs(res - 3.0) < 1e-5, "Dead node does not affect derivative");
+}
+
 int main() {
     cout << "Running Member 3 Reverse AD Tests...\n";
     
@@ -124,9 +201,13 @@ int main() {
     test_trig_exp();
     test_nested_power();
     test_division_log();
+    test_multivariable_gradient();
+    test_shared_subexpression_fanout();
+    test_dead_subexpression_pruning();
     
     cout << "\n=========================================\n";
     cout << "Test Summary: " << g_testsPassed << " / " << g_testsRun << " passed.\n";
     
     return (g_testsPassed == g_testsRun) ? 0 : 1;
 }
+
