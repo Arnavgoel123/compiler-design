@@ -7,10 +7,21 @@ using namespace ir;
 
 namespace reverse_ad {
 
-IRFunction reverseDifferentiate(const IRFunction& original, const string& withRespectTo) {
+namespace {
+
+struct ReverseADResult {
+    IRBuilder builder;
+    map<string, Operand> adjointVars;
+};
+
+ReverseADResult performReverseAD(const IRFunction& original, const string& targetVarName) {
     // We will build a new IRFunction that computes both the forward pass
     // (needed to get intermediate values) and the reverse backward sweep.
-    IRBuilder builder("d_" + original.name + "_d_" + withRespectTo);
+    string funcName = "d_" + original.name;
+    if (!targetVarName.empty()) {
+        funcName += "_d_" + targetVarName;
+    }
+    IRBuilder builder(funcName);
 
     // 1. Re-declare all original parameters.
     for (const string& p : original.params) {
@@ -18,18 +29,22 @@ IRFunction reverseDifferentiate(const IRFunction& original, const string& withRe
     }
 
     // 2. Forward Sweep: Emit the original instructions to get our primal values.
-    // We must track the mapping from the original function's temp IDs to our new builder's Operands.
+    // Track the mapping from the original function's temp IDs to our new builder's Operands.
     map<int, Operand> primalTemps;
 
     auto mapPrimalOperand = [&](const Operand& op) -> Operand {
         if (op.isConstant()) return op;
         if (op.isVariable()) return op; // Variables are already added as params.
-        if (op.isTemp()) return primalTemps.at(op.tempId);
-        throw runtime_error("Unknown operand kind in forward sweep.");
+        if (op.isTemp()) {
+            auto it = primalTemps.find(op.tempId);
+            if (it != primalTemps.end()) return it->second;
+        }
+        throw runtime_error("Unknown operand kind or unresolved temp in forward sweep.");
     };
 
     for (const auto& inst : original.instructions) {
         vector<Operand> mappedOperands;
+        mappedOperands.reserve(inst.operands.size());
         for (const auto& op : inst.operands) {
             mappedOperands.push_back(mapPrimalOperand(op));
         }
@@ -93,6 +108,13 @@ IRFunction reverseDifferentiate(const IRFunction& original, const string& withRe
 
         Operand t_bar = getAdjoint(Operand::makeTemp(inst.resultId));
 
+        // Optimization: Dead Adjoint Pruning
+        // If this temp was never used in the computation of the output, its adjoint is 0.
+        // Skip emitting downstream chain-rule operations for dead instructions.
+        if (t_bar.isConstant() && t_bar.constValue == 0.0) {
+            continue;
+        }
+
         Operand orig_a = inst.operands[0];
         Operand a = mapPrimalOperand(orig_a);
 
@@ -138,7 +160,7 @@ IRFunction reverseDifferentiate(const IRFunction& original, const string& withRe
                 break;
             case Op::EXP:
                 // t = exp(a) -> d(t)/da = exp(a)
-                // Since t_i = exp(a) was already computed in the forward pass, we can reuse it!
+                // Since t_i = exp(a) was already computed in the forward pass, reuse it!
                 addAdjoint(orig_a, builder.mul(t_bar, primalTemps[inst.resultId]));
                 break;
             case Op::LOG:
@@ -165,11 +187,32 @@ IRFunction reverseDifferentiate(const IRFunction& original, const string& withRe
         }
     }
 
-    // 5. Finalize the derivative.
-    Operand finalDerivative = getAdjoint(Operand::makeVariable(withRespectTo));
-    builder.setReturn(finalDerivative);
+    return ReverseADResult{std::move(builder), std::move(adjointVars)};
+}
 
-    return builder.build();
+} // namespace
+
+IRFunction reverseDifferentiate(const IRFunction& original, const string& withRespectTo) {
+    if (!original.hasParam(withRespectTo)) {
+        throw invalid_argument("Reverse AD variable is not a function parameter: " + withRespectTo);
+    }
+
+    auto res = performReverseAD(original, withRespectTo);
+
+    // Finalize the derivative for the target variable.
+    auto it = res.adjointVars.find(withRespectTo);
+    Operand finalDerivative = (it != res.adjointVars.end()) ? it->second : Operand::makeConstant(0.0);
+
+    res.builder.setReturn(finalDerivative);
+    return res.builder.build();
+}
+
+map<string, IRFunction> reverseGradient(const IRFunction& original) {
+    map<string, IRFunction> gradients;
+    for (const string& param : original.params) {
+        gradients[param] = reverseDifferentiate(original, param);
+    }
+    return gradients;
 }
 
 } // namespace reverse_ad

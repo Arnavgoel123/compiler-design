@@ -3,6 +3,8 @@
 #include "../../../compiler-ad-member4/src/ir/IR.h"
 #include <string>
 
+#include <map>
+
 namespace reverse_ad {
 
 // Reverse-mode Automatic Differentiation (Adjoint Mode).
@@ -14,4 +16,9 @@ namespace reverse_ad {
 // CodeGenerator, and Validator.
 ir::IRFunction reverseDifferentiate(const ir::IRFunction& original, const std::string& withRespectTo);
 
+// Computes the full gradient for all input parameters in a single reverse sweep.
+// Returns a map of parameter name -> derivative IRFunction.
+std::map<std::string, ir::IRFunction> reverseGradient(const ir::IRFunction& original);
+
 } // namespace reverse_ad
+
