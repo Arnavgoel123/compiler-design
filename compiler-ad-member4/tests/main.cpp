@@ -383,7 +383,9 @@ void test_code_generation() {
     exprs.emplace_back("y = log(x)", un(ast::UnaryOp::LOG, var("x")));
     exprs.emplace_back("y = x/(x+1)", bin(ast::BinaryOp::DIV, var("x"), bin(ast::BinaryOp::ADD, var("x"), num(1))));
 
-    for (auto& [label, exprNode] : exprs) {
+    for (auto& entry : exprs) {
+        const string& label = entry.first;
+        unique_ptr<ast::Node>& exprNode = entry.second;
         ast::Assignment assignment("y", std::move(exprNode));
         IRFunction f = astToIr::convert(assignment, "generated_fn");
         IRFunction optimized = optimizer::Optimizer::optimize(f);
@@ -489,6 +491,99 @@ void test_numerical_validator_standalone() {
     check(!badReport.allPassed, "deliberately wrong derivative correctly FAILS finite-difference check");
 }
 
+// =============================================================================
+// TEST 15: multi-equation programs (AST -> IRProgram, pruning, Jacobian codegen)
+// =============================================================================
+void test_multi_equation_program() {
+    section("TEST 15: multi-equation program  a = x*z; y = sin(a) + x; u = z*z");
+
+    ast::Program program;
+    program.inputs.push_back(make_unique<ast::InputDeclaration>(vector<string>{"x", "z"}));
+    program.assignments.push_back(make_unique<ast::Assignment>(
+        "a", bin(ast::BinaryOp::MUL, var("x"), var("z"))));
+    program.assignments.push_back(make_unique<ast::Assignment>(
+        "y", bin(ast::BinaryOp::ADD, un(ast::UnaryOp::SIN, var("a")), var("x"))));
+    program.assignments.push_back(make_unique<ast::Assignment>(
+        "u", bin(ast::BinaryOp::MUL, var("z"), var("z"))));
+    program.assignment = program.assignments.back().get();
+
+    IRProgram all = astToIr::convertProgramAll(program, "f");
+    cout << all.toString() << "\n";
+
+    check(all.outputs.size() == 3, "one IR function per equation");
+    check(all.params == vector<string>({"x", "z"}), "program parameters are the declared inputs");
+
+    const IROutput* a = all.find("a");
+    const IROutput* y = all.find("y");
+    const IROutput* u = all.find("u");
+    check(a && y && u, "outputs are addressable by variable name");
+    check(all.find("nope") == nullptr, "unknown output name returns nullptr");
+
+    check(a->function.instructions.size() == 1, "f_a has 1 instruction (MUL)");
+    check(y->function.instructions.size() == 3,
+          "f_y has 3 instructions: the earlier equation for 'a' is inlined, 'u' is pruned away");
+    check(u->function.instructions.size() == 1, "f_u only contains its own MUL (no dead code from a or y)");
+    check(y->function.params == all.params && u->function.params == all.params,
+          "all outputs share one parameter list, even if an output ignores an input");
+    check(y->function.name == "f_y", "output functions are named <prefix>_<variable>");
+
+    // Temps are renumbered densely from t1 after pruning.
+    check(y->function.instructions[0].resultId == 1 && y->function.instructions[2].resultId == 3,
+          "temps are renumbered t1..tn after pruning");
+    check(validation::IRValidator::validate(y->function).valid, "pruned IR is structurally valid");
+
+    const double x = 0.8, z = 1.7;
+    map<string, double> in = {{"x", x}, {"z", z}};
+    checkNear(evaluate(a->function, in), x * z, 1e-12, "f_a evaluates to x*z");
+    checkNear(evaluate(y->function, in), sin(x * z) + x, 1e-12, "f_y reuses 'a' correctly");
+    checkNear(evaluate(u->function, in), z * z, 1e-12, "f_u evaluates to z*z");
+
+    // The single-function entry point returns the LAST equation.
+    IRFunction last = astToIr::convertProgram(program, "g");
+    check(last.name == "g", "convertProgram() honours the requested function name");
+    checkNear(evaluate(last, in), z * z, 1e-12, "convertProgram() returns the last equation");
+
+    // Duplicate assignment is rejected at IR level too (defence in depth).
+    {
+        ast::Program bad;
+        bad.inputs.push_back(make_unique<ast::InputDeclaration>(vector<string>{"x"}));
+        bad.assignments.push_back(make_unique<ast::Assignment>("y", var("x")));
+        bad.assignments.push_back(make_unique<ast::Assignment>("y", var("x")));
+        bool threw = false;
+        try { astToIr::convertProgramAll(bad); } catch (const astToIr::ConversionError&) { threw = true; }
+        check(threw, "assigning a variable twice is a ConversionError");
+    }
+
+    // Outputs that are just a variable or a constant still lower correctly.
+    {
+        ast::Program trivial;
+        trivial.inputs.push_back(make_unique<ast::InputDeclaration>(vector<string>{"x"}));
+        trivial.assignments.push_back(make_unique<ast::Assignment>("p", var("x")));
+        trivial.assignments.push_back(make_unique<ast::Assignment>("q", num(5.0)));
+        IRProgram t = astToIr::convertProgramAll(trivial);
+        check(t.outputs[0].function.instructions.empty() && t.outputs[0].function.returnValue.isVariable(),
+              "'p = x' lowers to a bare variable return");
+        checkNear(evaluate(t.outputs[1].function, {{"x", 2.0}}), 5.0, 1e-12, "'q = 5' lowers to a constant return");
+    }
+
+    // Multi-function source + Jacobian wrapper.
+    string src = codegen::CodeGenerator::generateStandaloneSource({a->function, y->function});
+    check(src.find("double f_a(") != string::npos && src.find("double f_y(") != string::npos,
+          "standalone source contains every function");
+    check(src.find("#include <cmath>") != string::npos, "standalone source includes <cmath> once");
+
+    string jac = codegen::CodeGenerator::generateJacobianWrapper(
+        "jacobian", {"x", "z"}, {"a", "y"},
+        {{"d_a_d_x", "d_a_d_z"}, {"d_y_d_x", "d_y_d_z"}});
+    check(jac.find("void jacobian(double x, double z, double J[2][2])") != string::npos,
+          "Jacobian wrapper has the right signature");
+    check(jac.find("J[1][0] = d_y_d_x(x, z);") != string::npos, "Jacobian wrapper fills J[i][j] = d(out_i)/d(in_j)");
+    bool threw = false;
+    try { codegen::CodeGenerator::generateJacobianWrapper("j", {"x"}, {"a", "b"}, {{"d"}}); }
+    catch (const runtime_error&) { threw = true; }
+    check(threw, "Jacobian wrapper rejects a mismatched derivative table");
+}
+
 int main() {
     cout << fixed << setprecision(6);
 
@@ -506,6 +601,7 @@ int main() {
     test_code_generation();
     test_ad_integration_pipeline();
     test_numerical_validator_standalone();
+    test_multi_equation_program();
 
     cout << "\n============================================================\n";
     cout << "TOTAL: " << g_testsRun << " checks run, " << g_testsFailed << " failed.\n";

@@ -78,13 +78,29 @@ std::string printAST(const ast::Program& program) {
         }
     }
 
-    if (program.assignment) {
-        out << "  Assignment(" << program.assignment->targetName << ")\n";
-        if (program.assignment->value) {
-            printNode(*program.assignment->value, out, "    ");
+    for (const auto& assignment : program.assignments) {
+        if (!assignment) continue;
+        out << "  Assignment(" << assignment->targetName << ")\n";
+        if (assignment->value) {
+            printNode(*assignment->value, out, "    ");
         }
     }
 
+    return out.str();
+}
+
+std::string printSymbolTable(const std::vector<SymbolInfo>& symbols) {
+    std::ostringstream out;
+    out << "Symbol table:\n";
+    out << "  #  name        kind        type     defined at\n";
+    out << "  -  ----------  ----------  -------  ----------\n";
+    for (std::size_t i = 0; i < symbols.size(); ++i) {
+        const SymbolInfo& s = symbols[i];
+        const std::string kind = (s.kind == ast::SymbolKind::Input) ? "input" : "assigned";
+        out << "  " << i + 1 << "  " << std::left << std::setw(10) << s.name << "  "
+            << std::setw(10) << kind << "  " << std::setw(7) << "Number" << "  "
+            << s.line << ':' << s.column << '\n';
+    }
     return out.str();
 }
 

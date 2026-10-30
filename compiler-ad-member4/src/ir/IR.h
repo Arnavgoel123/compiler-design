@@ -111,6 +111,36 @@ struct IRFunction {
 };
 
 // -----------------------------------------------------------------------------
+// IRProgram: the lowered form of a MULTI-EQUATION program.
+//
+//     input x, z;
+//     a = x * z;
+//     y = sin(a) + x;
+//
+// Every assigned variable is an output. Each output is lowered to its own
+// single-output IRFunction that contains exactly the instructions it depends
+// on (earlier equations are inlined as shared SSA temps), and all outputs
+// share the same parameter list. Because each entry is an ordinary
+// IRFunction, Forward AD, Reverse AD, the Optimizer, the CodeGenerator and
+// the Validator work on it unchanged - the Jacobian is simply
+// outputs x params independent derivative functions.
+// -----------------------------------------------------------------------------
+struct IROutput {
+    string name;           // the assigned variable, e.g. "y"
+    IRFunction function;   // computes that variable from the program inputs
+};
+
+struct IRProgram {
+    vector<string> params;       // program inputs, in declaration order
+    vector<IROutput> outputs;    // one per assignment, in source order
+
+    string toString() const;
+
+    // Returns nullptr if no output has this name.
+    const IROutput* find(const string& outputName) const;
+};
+
+// -----------------------------------------------------------------------------
 // IRBuilder: convenience helper for constructing an IRFunction instruction
 // by instruction. Used by ASTToIR, and available to Forward/Reverse AD
 // implementers (Members 2 & 3) so they can build derivative IR without

@@ -1,11 +1,12 @@
 # Automatic Differentiation DSL Grammar
 
-The frontend accepts one output assignment. Input variables are declared with
+The frontend accepts one or more equations. Input variables are declared with
 `input` declarations so semantic scope checking can distinguish parameters from
-the output variable.
+assigned variables. A later equation may use any variable defined by an earlier
+one (single assignment: each name is defined at most once).
 
 ```text
-program       ::= input_declaration* assignment EOF ;
+program       ::= input_declaration* assignment+ EOF ;
 
 input_declaration
               ::= "input" identifier ("," identifier)* ";" ;
@@ -69,6 +70,20 @@ y = 3*x^2 + sin(x);
 input x, z;
 y = exp(sin(x)) + pow(z, 2);
 ```
+
+```text
+input x, z;
+a = x * z;
+y = sin(a) + x^2;
+w = exp(y) / (1 + z^2);
+```
+
+Semantic rules for multiple equations:
+
+- every variable must be declared (`input`) or assigned **before** it is used;
+- a variable can be assigned only once, and cannot reuse the name of an input;
+- an equation cannot use its own result (`y = y + 1;` is an error);
+- `input` declarations must come before the first equation.
 
 The parser builds the AST, and the semantic analyzer validates declarations,
 function names/arity, numeric types, and output/input scope before the AST is

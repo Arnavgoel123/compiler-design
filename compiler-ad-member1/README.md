@@ -32,13 +32,20 @@ Member 4 AST -> IR
 
 ## Source language
 
-Input variables are declared with `input` and the program contains one output
-assignment:
+Input variables are declared with `input`, followed by one or more equations.
+Later equations can use the results of earlier ones:
 
 ```text
 input x, z;
-y = 3*x^2 + sin(x) + pow(z, 2);
+a = x * z;
+y = 3*x^2 + sin(a) + pow(z, 2);
 ```
+
+A single equation (`input x; y = x*x;`) is just the one-equation case.
+The semantic analyzer keeps a symbol table (inputs first, then assigned
+variables in definition order); `parseAndValidate(source, &symbols)` returns
+it and `printSymbolTable()` renders it. `Program::assignments` holds every
+equation; `Program::assignment` still points at the last one.
 
 Supported operators:
 

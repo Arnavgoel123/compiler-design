@@ -34,7 +34,15 @@ std::unique_ptr<ast::Program> Parser::parseProgram() {
         errorAt(peek(), "Expected an assignment such as 'y = x * x;'");
     }
 
-    program->assignment = parseAssignment();
+    // One or more equations, up to end of input.
+    while (!check(TokenType::EndOfFile)) {
+        if (check(TokenType::Input)) {
+            errorAt(peek(), "'input' declarations must appear before the first assignment");
+        }
+        program->assignments.push_back(parseAssignment());
+    }
+
+    program->assignment = program->assignments.back().get();
     consume(TokenType::EndOfFile, "Expected end of input after assignment");
     return program;
 }
